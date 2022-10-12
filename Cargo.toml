@@ -1,5 +1,16 @@
 [package]
 name = "server_sync"
+authors = ["Racci"]
+repository = "https://github.com/DaRacci/ServerSync"
+
+categories = ["server", "sync", "repo"]
+keywords = ["server", "sync", "repo", "template"]
+description = "Syncronizes your server with a git repository and supports templaing."
+
+license = "MIT"
+license-file = "LICENSE"
+readme = "README.md"
+
 version = "0.1.0"
 edition = "2021"
 
