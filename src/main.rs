@@ -67,7 +67,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let conf = EnvConf::new()?;
     let mut handlebars = new_handlerbars().context("Initialize handlebars")?;
 
-    sync_repository()?;
+    sync_repository(&conf)?;
 
     debug!("Destination root: {}", &conf.destination_root.display());
     debug!("Variables: {:?}", &conf.get_variables());
@@ -82,12 +82,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn sync_repository() -> Result<(), Box<dyn Error>> {
+fn sync_repository(conf: &EnvConf) -> Result<(), Box<dyn Error>> {
     let current_dir = env::current_dir()?;
 
     let output = Command::new("git")
-        .arg("pull")
         .current_dir(&current_dir)
+        .arg("pull")
+        .arg(conf.get_env("GIT_REMOTE").unwrap_or(&"origin".to_string()))
+        .arg(conf.get_env("GIT_BRANCH").unwrap_or(&"master".to_string()))
         .output()?;
 
     let output_str = String::from_utf8_lossy(&output.stdout);
