@@ -1,0 +1,42 @@
+on:
+  push:
+    paths: ["src/*"]
+    branches: [master]
+
+name: CI
+
+jobs:
+  build_matrix:
+    strategy:
+      matrix:
+        build: [linux]
+        include:
+          - build: linux
+            os: ubuntu-latest
+            file: server-sync
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v1
+
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+
+      - name: Strip files
+        run: strip target/release/${{ matrix.file }}
+
+      - uses: actions/upload-artifact@v3.0.0
+        with:
+          name: PGen-${{ matrix.build }}
+          path: target/release/${{ matrix.file }}
