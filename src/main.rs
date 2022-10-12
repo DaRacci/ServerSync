@@ -1,20 +1,27 @@
+use anyhow::Context;
+use clap::{command, Arg, ArgMatches};
+use envfile::EnvFile;
+use handlebars::Handlebars;
+use similar::{ChangeTag, TextDiff};
+use simplelog::__private::log::SetLoggerError;
+use simplelog::{
+    debug, error, info, trace, ColorChoice, Config, ConfigBuilder, LevelFilter, TermLogger,
+    TerminalMode,
+};
+use std::any::Any;
 use std::collections::BTreeMap;
 use std::env;
 use std::env::var_os;
 use std::error::Error;
-use std::fs::{create_dir_all, File, rename};
+use std::fs::{create_dir_all, rename, File};
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Command, exit};
-use anyhow::Context;
-use envfile::EnvFile;
-use handlebars::Handlebars;
-use similar::{ChangeTag, TextDiff};
-use simplelog::{ColorChoice, ConfigBuilder, debug, error, info, LevelFilter, TerminalMode, TermLogger, trace};
+use std::process::{exit, Command};
 use walkdir::WalkDir;
 
 fn main() {
-    init();
+    let cli = get_cli();
+    start_logger(&cli).unwrap();
 
     match run() {
         Ok(_) => {
@@ -28,15 +35,31 @@ fn main() {
     }
 }
 
-fn init() {
-    let term_config = ConfigBuilder::new().build();
+fn get_cli() -> ArgMatches {
+    command!()
+        .propagate_version(true)
+        .args([Arg::new("VERBOSE")
+            .short('v')
+            .action(clap::ArgAction::Count)])
+        .get_matches()
+}
+
+fn start_logger(matches: &ArgMatches) -> Result<(), SetLoggerError> {
+    let level = matches.get_count("VERBOSE");
+    let level = match level {
+        2 => LevelFilter::Trace,
+        1 => LevelFilter::Debug,
+        _ => LevelFilter::Info,
+    };
+
+    println!("level: {:?}", level);
+
     TermLogger::init(
-        LevelFilter::Trace,
-        term_config,
+        level,
+        Config::default(),
         TerminalMode::Mixed,
-        ColorChoice::Always,
+        ColorChoice::Auto,
     )
-    .expect("TODO: panic message");
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
@@ -146,7 +169,7 @@ fn sync_repository() -> Result<(), Box<dyn Error>> {
         info!("Repository is already up to date!");
     } else {
         info!("Successfully synchronized with repository!");
-        debug!("{}", &output_str);
+        debug!("Git pull output -> {}", &output_str);
     }
 
     Ok(())
@@ -203,7 +226,7 @@ fn walk_directory<'a>(
         let rendered = handlebars.render(&relative_str, &variables_cloned)?;
         let parent = target_path.parent().expect("File was at / level???");
 
-        debug!(
+        trace!(
             "Templating {} to {}",
             &absolute_source.display(),
             &target_path.display()
@@ -233,24 +256,20 @@ fn walk_directory<'a>(
                 print!("{} {}", sign, change);
             }
 
-            // diff.unified_diff()
-            //     .iter_hunks()
-            //     .for_each(|line| println!("{}", line));
-
             if diff.ratio() == 1.0 {
                 debug!(
                     "Skipping {} as it is already up to date",
-                    target_path.display()
+                    &relative_str
                 );
                 continue;
             }
 
-            debug!("Backing up {}", target_path.display());
+            trace!("Backing up {}", target_path.display());
             let backup_path = Path::new(&target_path).with_extension("bak");
             rename(&target_path, &backup_path)?;
         }
 
-        debug!("Writing {}", target_path.display());
+        trace!("Writing {}", target_path.display());
         let mut file = File::create(&target_path)?;
         file.write_all(rendered.as_bytes())?;
     }
