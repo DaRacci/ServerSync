@@ -1,22 +1,22 @@
+mod config;
+
+use crate::config::{EnvConf, ServerContext};
 use anyhow::Context;
 use clap::{command, Arg, ArgMatches};
-use envfile::EnvFile;
 use handlebars::Handlebars;
 use similar::{ChangeTag, TextDiff};
 use simplelog::__private::log::SetLoggerError;
 use simplelog::{
-    debug, error, info, trace, ColorChoice, Config, ConfigBuilder, LevelFilter, TermLogger,
+    debug, error, info, trace, ColorChoice, Config, LevelFilter, TermLogger,
     TerminalMode,
 };
-use std::any::Any;
-use std::collections::BTreeMap;
-use std::env;
-use std::env::var_os;
 use std::error::Error;
-use std::fs::{create_dir_all, rename, File};
+use std::fs::{create_dir_all, rename, File, Permissions};
 use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{exit, Command};
+use std::{env, fs};
 use walkdir::WalkDir;
 
 fn main() {
@@ -49,10 +49,12 @@ fn start_logger(matches: &ArgMatches) -> Result<(), SetLoggerError> {
     let level = match level {
         2 => LevelFilter::Trace,
         1 => LevelFilter::Debug,
-        _ => LevelFilter::Info,
+        0 => LevelFilter::Info,
+        _ => {
+            error!("Too many -v flags");
+            LevelFilter::Trace
+        }
     };
-
-    println!("level: {:?}", level);
 
     TermLogger::init(
         level,
@@ -63,88 +65,19 @@ fn start_logger(matches: &ArgMatches) -> Result<(), SetLoggerError> {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let envfile = EnvFile::new(&Path::new(".env"));
-
-    let raw_string = get_env("SERVER_NAME", &envfile)?;
-    let source_names = raw_string.split(";");
-    let path_str = get_env("SERVER_PATH", &envfile)?;
-
-    let sources_str = source_names
-        .map(|n| format!("servers/{n}/"))
-        .collect::<Vec<String>>();
-    let (server_dest, source_paths) = get_paths(&path_str, &sources_str)?;
-
-    info!("Sources: {:?}", &sources_str);
-    info!(
-        "Source paths: {}",
-        &source_paths
-            .iter()
-            .map(|x| x.to_str().unwrap())
-            .collect::<Vec<&str>>()
-            .join(", ")
-    );
-    info!("Destination Path: {}", &server_dest.display());
-
+    let conf = EnvConf::new()?;
     let mut handlebars = new_handlerbars().context("Initialize handlebars")?;
 
-    match sync_repository() {
-        Ok(_) => Ok(()),
-        Err(err) => Err(Box::<dyn Error>::from(err)),
-    }?;
+    sync_repository()?;
 
-    let mut variables = BTreeMap::<String, String>::new();
-    if let Ok(envs) = envfile {
-        for (key, value) in envs.store {
-            variables.insert(key, value);
-        }
-    }
+    debug!("Destination root: {}", &conf.destination_root.display());
+    debug!("Variables: {:?}", &conf.get_variables());
 
-    debug!("Variables: {:?}", &variables);
+    for context in conf.get_contexts() {
+        info!("Processing context {}", context.name);
+        debug!("Source root: {}", context.source_root.display());
 
-    for source in source_paths {
-        info!("Syncing {}", &source.display());
-        walk_directory(&source, &server_dest, &mut handlebars, &variables)?;
-    }
-
-    Ok(())
-}
-
-fn get_env<'a>(env: &str, envfile: &std::io::Result<EnvFile>) -> Result<String, Box<dyn Error>> {
-    return match var_os(env) {
-        Some(value) => Ok(value.to_string_lossy().to_string()),
-        None => match envfile {
-            Ok(envfile) => match envfile.get(env) {
-                Some(value) => Ok(value.to_string()),
-                None => Err(Box::<dyn Error>::from(format!("{} is not set", env))),
-            },
-            Err(_) => Err(Box::<dyn Error>::from(format!("{} is not set", env))),
-        },
-    };
-}
-
-fn get_paths<'a>(
-    path_str: &'a str,
-    sources: &'a Vec<String>,
-) -> Result<(&'a Path, Vec<&Path>), Box<dyn Error>> {
-    let server_path = Path::new(path_str);
-    exists_and_dir(server_path)?;
-
-    let mut source_paths = Vec::new();
-    for source in sources {
-        let source_path = Path::new(source);
-        exists_and_dir(source_path)?;
-        source_paths.push(source_path);
-    }
-
-    Ok((server_path, source_paths))
-}
-
-fn exists_and_dir(path: &Path) -> Result<(), Box<dyn Error>> {
-    if !path.exists() || !path.is_dir() {
-        return Err(Box::<dyn Error>::from(format!(
-            "Destination path {} does not exist or is not a directory!",
-            path.display()
-        )));
+        walk_directory(&mut handlebars, &context, &conf)?;
     }
 
     Ok(())
@@ -175,77 +108,55 @@ fn sync_repository() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn walk_directory<'a>(
-    root: &Path,
-    to: &Path,
+fn walk_directory(
     handlebars: &mut Handlebars,
-    variables: &BTreeMap<String, String>,
-) -> Result<(), Box<dyn Error>> {
-    let server_name = root
-        .strip_prefix("servers/")
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
-
-    let walker = WalkDir::new(root)
+    context: &ServerContext,
+    conf: &EnvConf,
+) -> anyhow::Result<()> {
+    let walker = WalkDir::new(&context.source_root)
         .same_file_system(true)
         .into_iter()
-        .filter(|e| e.is_ok());
+        .filter(|e| e.is_ok())
+        .filter(|e| e.as_ref().unwrap().file_type().is_file())
+        .map(|e| e.unwrap());
 
-    for result in walker {
-        let entry = match result {
-            Ok(unwrapped) => unwrapped,
-            Err(_) => continue,
+    for entry in walker {
+        let relative_path = entry.path().strip_prefix(&context.source_root)?;
+        let destination_path = conf.destination_root.join(relative_path);
+
+        trace!("Processing file {}", relative_path.display());
+
+        let contents = match get_contents(entry.path()) {
+            None => continue,
+            Some(value) => value,
         };
 
-        if entry.path().is_dir() {
-            continue;
-        }
+        let mut variables_cloned = conf.get_variables().clone();
+        variables_cloned.insert(String::from("server_name"), context.name.to_owned());
+        handlebars.register_template_string(&entry.file_name().to_string_lossy(), &contents)?;
 
-        let relative_str = entry
-            .path()
-            .strip_prefix(root)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .clone();
-        let target_path = to.join(&relative_str);
-        let absolute_source = env::current_dir().unwrap().join(&root).join(&relative_str);
-
-        trace!("Current file: {}", &absolute_source.display());
-
-        let mut source_contents = String::new();
-        if let Err(_) = File::open(&absolute_source)?.read_to_string(&mut source_contents) {
-            continue;
-        };
-
-        let mut variables_cloned = variables.clone();
-        variables_cloned.insert(String::from("server_name"), server_name.to_owned());
-        handlebars.register_template_string(&relative_str, &source_contents)?;
-
-        let rendered = handlebars.render(&relative_str, &variables_cloned)?;
-        let parent = target_path.parent().expect("File was at / level???");
+        let rendered =
+            handlebars.render(&entry.file_name().to_string_lossy(), &variables_cloned)?;
+        let parent = destination_path.parent().expect("File was at / level???");
 
         trace!(
             "Templating {} to {}",
-            &absolute_source.display(),
-            &target_path.display()
+            &entry.path().display(),
+            &destination_path.display()
         );
 
         if !parent.exists() {
-            debug!("Creating new directory {}", target_path.display());
+            debug!("Creating new directory {}", destination_path.display());
             create_dir_all(&parent)?;
         }
 
-        if target_path.exists() {
-            let mut open_file = File::open(&target_path)?;
+        if destination_path.exists() {
+            let existing_contents = match get_contents(&destination_path) {
+                None => continue,
+                Some(value) => value,
+            };
 
-            let mut target_contents = String::new();
-            if let Err(_) = open_file.read_to_string(&mut target_contents) {
-                continue;
-            }
-
-            let diff = TextDiff::from_lines(&target_contents, &rendered);
+            let diff = TextDiff::from_lines(&existing_contents, &rendered);
             for change in diff.iter_all_changes() {
                 let sign = match change.tag() {
                     ChangeTag::Delete => "-",
@@ -259,22 +170,31 @@ fn walk_directory<'a>(
             if diff.ratio() == 1.0 {
                 debug!(
                     "Skipping {} as it is already up to date",
-                    &relative_str
+                    &relative_path.display()
                 );
                 continue;
             }
 
-            trace!("Backing up {}", target_path.display());
-            let backup_path = Path::new(&target_path).with_extension("bak");
-            rename(&target_path, &backup_path)?;
+            trace!("Backing up {}", destination_path.display());
+            let backup_path = Path::new(&destination_path).with_extension("bak");
+            rename(&destination_path, &backup_path)?;
         }
 
-        trace!("Writing {}", target_path.display());
-        let mut file = File::create(&target_path)?;
+        trace!("Writing {}", destination_path.display());
+        let mut file = File::create(&destination_path)?;
         file.write_all(rendered.as_bytes())?;
     }
 
     Ok(())
+}
+
+fn get_contents<P: AsRef<Path>>(path: P) -> Option<String> {
+    let mut source = vec![];
+    File::open(path).unwrap().read_to_end(&mut source).unwrap();
+    return match simdutf8::basic::from_utf8(&source) {
+        Ok(contents) => Some(contents.to_string()),
+        Err(_) => None,
+    };
 }
 
 fn new_handlerbars<'a, 'b>() -> anyhow::Result<Handlebars<'b>> {

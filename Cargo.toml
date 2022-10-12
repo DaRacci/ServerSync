@@ -11,3 +11,5 @@ envfile = "0.2.1"
 anyhow = "1.0.65"
 similar = "2.2.0"
 clap = { version = "4.0.13", features = ["derive", "cargo"] }
+file-owner = "0.1.1"
+simdutf8 = "0.1.4"
