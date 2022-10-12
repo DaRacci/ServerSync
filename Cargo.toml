@@ -1,0 +1,12 @@
+[package]
+name = "server_sync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+simplelog = { version = "^0.12.0", features = ["paris"] }
+handlebars = "4.3.5"
+walkdir = "2.3.2"
+envfile = "0.2.1"
+anyhow = "1.0.65"
+similar = "2.2.0"
