@@ -183,6 +183,8 @@ fn walk_directory(
         trace!("Writing {}", destination_path.display());
         let mut file = File::create(&destination_path)?;
         file.write_all(rendered.as_bytes())?;
+
+        fix_permissions(&destination_path, &conf)?;
     }
 
     Ok(())
@@ -206,4 +208,24 @@ fn new_handlerbars<'a, 'b>() -> anyhow::Result<Handlebars<'b>> {
     handlebars.register_escape_fn(handlebars::no_escape); // Disable HTML escaping
 
     Ok(handlebars)
+}
+
+fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
+    fs::set_permissions(path, Permissions::from_mode(0o644))?;
+
+    let owner_name = conf
+        .get_env("USER")
+        .or(conf.get_env("UID"))
+        .context("Getting USER or UID environment variable")?;
+    let group_name = conf
+        .get_env("GROUP")
+        .or(conf.get_env("GID"))
+        .context("Getting GROUP or GID environment variable")?;
+
+    let owner = file_owner::Owner::from_name(&owner_name)?;
+    let group = file_owner::Group::from_name(&group_name)?;
+
+    file_owner::set_owner_group(path, owner, group)?;
+
+    Ok(())
 }
