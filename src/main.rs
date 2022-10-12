@@ -7,8 +7,7 @@ use handlebars::Handlebars;
 use similar::{ChangeTag, TextDiff};
 use simplelog::__private::log::SetLoggerError;
 use simplelog::{
-    debug, error, info, trace, ColorChoice, Config, LevelFilter, TermLogger,
-    TerminalMode,
+    debug, error, info, trace, ColorChoice, Config, LevelFilter, TermLogger, TerminalMode,
 };
 use std::error::Error;
 use std::fs::{create_dir_all, rename, File, Permissions};
@@ -214,12 +213,12 @@ fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
     fs::set_permissions(path, Permissions::from_mode(0o644))?;
 
     let owner_name = conf
-        .get_env("USER")
-        .or(conf.get_env("UID"))
+        .get_env("UID")
+        .or(conf.get_env("USER"))
         .context("Getting USER or UID environment variable")?;
     let group_name = conf
-        .get_env("GROUP")
-        .or(conf.get_env("GID"))
+        .get_env("GID")
+        .or(conf.get_env("GROUP"))
         .context("Getting GROUP or GID environment variable")?;
 
     let owner = file_owner::Owner::from_name(&owner_name)?;
