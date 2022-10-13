@@ -1,7 +1,7 @@
 mod config;
 
 use crate::config::{EnvConf, ServerContext};
-use anyhow::Context;
+use anyhow::{format_err, Context};
 use clap::{command, Arg, ArgAction, ArgMatches};
 use handlebars::Handlebars;
 use similar::{ChangeTag, TextDiff};
@@ -106,7 +106,7 @@ fn start_logger(matches: &ArgMatches) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run(conf: EnvConf) -> Result<(), Box<dyn Error>> {
+fn run(conf: EnvConf) -> anyhow::Result<()> {
     let repo_str = conf.get_env("SERVER_SYNC_REPO_STORAGE").unwrap();
     let repo_dir = Path::new(&repo_str);
     sync_repository(&conf, &repo_dir)?;
@@ -116,6 +116,13 @@ fn run(conf: EnvConf) -> Result<(), Box<dyn Error>> {
     debug!("Variables: {:?}", &conf.get_variables());
 
     for context in conf.get_contexts() {
+        if !context.source_root.exists() || !context.source_root.is_dir() {
+            return return Err(format_err!(
+                "Server source root doesn't exist or is not a directory: {}",
+                context.source_root.display()
+            ));
+        }
+
         info!("Processing context {}", context.name);
         debug!("Source root: {}", context.source_root.display());
 

@@ -8,7 +8,7 @@ use simplelog::{debug, trace, warn};
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::BufRead;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 pub struct ServerContext {
     pub name: String,
@@ -18,13 +18,6 @@ pub struct ServerContext {
 impl ServerContext {
     pub fn new(name: String, repo_path: &str) -> anyhow::Result<Self> {
         let source_root = PathBuf::from(repo_path).join("contexts/").join(&name);
-
-        if !source_root.exists() || !source_root.is_dir() {
-            return Err(format_err!(
-                "Server source root doesn't exist or is not a directory: {}",
-                source_root.display()
-            ));
-        }
 
         Ok(Self { name, source_root })
     }
@@ -52,7 +45,8 @@ impl EnvConf {
         let raw_destination = _get_env("SERVER_SYNC_DESTINATION", &matches, &file)
             .context("Get destination for sync")?;
 
-        let repo_path = _get_env("SERVER_SYNC_REPO_STORAGE", &matches, &file).context("Get repository path")?;
+        let repo_path =
+            _get_env("SERVER_SYNC_REPO_STORAGE", &matches, &file).context("Get repository path")?;
 
         let contexts = matches
             .get_many::<String>("SERVER_SYNC_CONTEXTS")
