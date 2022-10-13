@@ -52,7 +52,7 @@ impl EnvConf {
         let raw_destination = _get_env("SERVER_SYNC_DESTINATION", &matches, &file)
             .context("Get destination for sync")?;
 
-        let repo_path = _get_env("SERVER_SYNC_REPO", &matches, &file).context("Get repository path")?;
+        let repo_path = _get_env("SERVER_SYNC_DESTINATION", &matches, &file).context("Get repository path")?;
 
         let contexts = matches
             .get_many::<String>("SERVER_SYNC_CONTEXTS")
