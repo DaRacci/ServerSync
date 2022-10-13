@@ -234,17 +234,23 @@ fn new_handlerbars<'a, 'b>() -> anyhow::Result<Handlebars<'b>> {
 fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
     fs::set_permissions(path, Permissions::from_mode(0o644))?;
 
-    let owner_name = conf
+    let owner = conf
         .get_env("UID")
-        .or(conf.get_env("USER"))
-        .context("Getting USER or UID environment variable")?;
-    let group_name = conf
-        .get_env("GID")
-        .or(conf.get_env("GROUP"))
-        .context("Getting GROUP or GID environment variable")?;
+        .map(|uid| file_owner::Owner::from(uid.parse::<u32>().unwrap()))
+        .or_else(|| {
+            conf.get_env("USER")
+                .map(|user| file_owner::Owner::from_name(user).unwrap())
+        })
+        .context("Getting UID or USER environment variable")?;
 
-    let owner = file_owner::Owner::from_name(&owner_name)?;
-    let group = file_owner::Group::from_name(&group_name)?;
+    let group = conf
+        .get_env("GID")
+        .map(|gid| file_owner::Group::from(gid.parse::<u32>().unwrap()))
+        .or_else(|| {
+            conf.get_env("GROUP")
+                .map(|group| file_owner::Group::from_name(group).unwrap())
+        })
+        .context("Getting GID or GROUP environment variable")?;
 
     file_owner::set_owner_group(path, owner, group)?;
 
