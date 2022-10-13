@@ -161,6 +161,8 @@ fn walk_directory(
 }
 
 fn get_contents<P: AsRef<Path>>(path: P) -> Option<String> {
+
+
     let mut source = vec![];
     File::open(path).unwrap().read_to_end(&mut source).unwrap();
     return match simdutf8::basic::from_utf8(&source) {
@@ -188,7 +190,7 @@ fn render_entry(
 }
 
 fn check_existing(destination: &Path, rendered: &String) -> anyhow::Result<bool> {
-    if destination.exists() {
+    if !destination.exists() {
         return Ok(false);
     }
 
