@@ -53,6 +53,8 @@ impl EnvConf {
             .map(|v| v.map(|s| s.to_string()).collect::<Vec<_>>())
             .or(file.as_ref().map(|f| {
                 f.get("SERVER_SYNC_CONTEXTS")
+                    .map(|s| s.to_string())
+                    .or(std::env::var("SERVER_SYNC_CONTEXTS").ok())
                     .map(|s| s.split(',').map(|s| s.to_string()).collect::<Vec<_>>())
                     .unwrap_or_default()
             }))
