@@ -7,7 +7,7 @@ use handlebars::Handlebars;
 use similar::{ChangeTag, TextDiff};
 use simplelog::__private::log::SetLoggerError;
 use simplelog::{
-    debug, error, info, trace, ColorChoice, Config, LevelFilter, TermLogger, TerminalMode,
+    debug, error, info, trace, Color, ColorChoice, Config, LevelFilter, TermLogger, TerminalMode,
 };
 use std::error::Error;
 use std::fs::{create_dir_all, rename, File, Permissions};
@@ -16,7 +16,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{exit, Command};
 use std::{env, fs};
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 fn main() {
     let cli = get_cli();
@@ -132,12 +132,7 @@ fn walk_directory(
             Some(value) => value,
         };
 
-        let mut variables_cloned = conf.get_variables().clone();
-        variables_cloned.insert(String::from("server_name"), context.name.to_owned());
-        handlebars.register_template_string(&entry.file_name().to_string_lossy(), &contents)?;
-
-        let rendered =
-            handlebars.render(&entry.file_name().to_string_lossy(), &variables_cloned)?;
+        let rendered = render_entry(handlebars, &context, &conf, &contents)?;
         let parent = destination_path.parent().expect("File was at / level???");
 
         trace!(
@@ -151,39 +146,13 @@ fn walk_directory(
             create_dir_all(&parent)?;
         }
 
-        if destination_path.exists() {
-            let existing_contents = match get_contents(&destination_path) {
-                None => continue,
-                Some(value) => value,
-            };
-
-            let diff = TextDiff::from_lines(&existing_contents, &rendered);
-            for change in diff.iter_all_changes() {
-                let sign = match change.tag() {
-                    ChangeTag::Delete => "-",
-                    ChangeTag::Insert => "+",
-                    ChangeTag::Equal => continue,
-                };
-
-                print!("{} {}", sign, change);
-            }
-
-            if diff.ratio() == 1.0 {
-                debug!(
-                    "Skipping {} as it is already up to date",
-                    &relative_path.display()
-                );
-                continue;
-            }
-
-            trace!("Backing up {}", destination_path.display());
-            let backup_path = Path::new(&destination_path).with_extension("bak");
-            rename(&destination_path, &backup_path)?;
+        if check_existing(&destination_path, &rendered) {
+            debug!("File {} is up to date", destination_path.display());
+        } else {
+            trace!("Writing {}", destination_path.display());
+            let mut file = File::create(&destination_path)?;
+            file.write_all(rendered.as_bytes())?;
         }
-
-        trace!("Writing {}", destination_path.display());
-        let mut file = File::create(&destination_path)?;
-        file.write_all(rendered.as_bytes())?;
 
         fix_permissions(&destination_path, &conf)?;
     }
@@ -198,6 +167,56 @@ fn get_contents<P: AsRef<Path>>(path: P) -> Option<String> {
         Ok(contents) => Some(contents.to_string()),
         Err(_) => None,
     };
+}
+
+fn render_entry(
+    handlebars: &mut Handlebars,
+    context: &ServerContext,
+    conf: &EnvConf,
+    contents: &String,
+) -> anyhow::Result<String> {
+    let mut variables_cloned = conf.get_variables().clone();
+    variables_cloned.insert(String::from("server_name"), context.name.to_owned());
+
+    handlebars.register_template_string(&entry.file_name().to_string_lossy(), &contents)?;
+
+    return handlebars
+        .render(&entry.file_name().to_string_lossy(), &variables_cloned)
+        .ok()
+        .context("Rendering template");
+}
+
+fn check_existing(destination: &Path, rendered: &String) -> bool {
+    if destination.exists() {
+        return false;
+    }
+
+    let existing_contents = match get_contents(&destination) {
+        None => return false,
+        Some(value) => value,
+    };
+
+    let diff = TextDiff::from_lines(&existing_contents, &rendered);
+    for change in diff.iter_all_changes() {
+        let sign = match change.tag() {
+            ChangeTag::Delete => "<red>-",
+            ChangeTag::Insert => "<green>+",
+            ChangeTag::Equal => continue,
+        };
+
+        info!("{} {}", sign, change);
+    }
+
+    if diff.ratio() == 1.0 {
+        return true;
+    }
+
+    trace!("Backing up {}", destination.display());
+
+    backup_path = Path::new(&destination).with_extension("bak");
+    rename(&destination, &backup_path)?;
+
+    return false;
 }
 
 fn new_handlerbars<'a, 'b>() -> anyhow::Result<Handlebars<'b>> {
