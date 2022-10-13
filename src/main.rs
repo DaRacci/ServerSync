@@ -2,13 +2,15 @@ mod config;
 
 use crate::config::{EnvConf, ServerContext};
 use anyhow::Context;
-use clap::{command, Arg, ArgMatches};
+use clap::{command, Arg, ArgAction, ArgMatches};
 use handlebars::Handlebars;
 use similar::{ChangeTag, TextDiff};
 use simplelog::__private::log::SetLoggerError;
 use simplelog::{
-    debug, error, info, trace, Color, ColorChoice, Config, LevelFilter, TermLogger, TerminalMode,
+    debug, error, info, trace, Color, ColorChoice, Config, ConfigBuilder, LevelFilter, TermLogger,
+    TerminalMode,
 };
+use std::env::current_dir;
 use std::error::Error;
 use std::fs::{create_dir_all, rename, File, Permissions};
 use std::io::{Read, Write};
@@ -20,9 +22,16 @@ use walkdir::{DirEntry, WalkDir};
 
 fn main() {
     let cli = get_cli();
-    start_logger(&cli).unwrap();
+    start_logger(&cli).context("Init logger").unwrap();
+    let conf = match EnvConf::new(cli) {
+        Ok(value) => value,
+        Err(err) => {
+            error!("Failed to init config -> {}", err);
+            exit(19)
+        }
+    };
 
-    match run() {
+    match run(conf) {
         Ok(_) => {
             info!("Done!");
             exit(0)
@@ -37,39 +46,73 @@ fn main() {
 fn get_cli() -> ArgMatches {
     command!()
         .propagate_version(true)
-        .args([Arg::new("VERBOSE")
-            .short('v')
-            .action(clap::ArgAction::Count)])
+        .args([
+            Arg::new("VERBOSE").short('v').action(ArgAction::Count),
+            Arg::new("SERVER_SYNC_ENV")
+                .short('e')
+                .long("env-file")
+                .env("SERVER_SYNC_ENV")
+                .help("The env file to load.")
+                .default_value(".server_env"),
+            Arg::new("SERVER_SYNC_REPO")
+                .short('r')
+                .long("repo")
+                .env("SERVER_SYNC_REPO")
+                .help("The repository to sync from."),
+            Arg::new("SERVER_SYNC_BRANCH")
+                .short('b')
+                .long("branch")
+                .env("SERVER_SYNC_BRANCH")
+                .help("The branch to sync from."),
+            Arg::new("SERVER_SYNC_DESTINATION")
+                .short('d')
+                .long("dest")
+                .help("The destination to sync to.")
+                .env("SERVER_SYNC_DESTINATION"),
+            Arg::new("SERVER_SYNC_CONTEXTS")
+                .short('c')
+                .long("contexts")
+                .help("The server contexts to use.")
+                .action(ArgAction::Append),
+            Arg::new("SERVER_SYNC_REPO_STORAGE")
+                .long("repo-storage")
+                .env("SERVER_SYNC_REPO_STORAGE")
+                .help("The storage path for the repository.")
+                .default_value("/tmp/server-sync/"),
+        ])
         .get_matches()
 }
 
-fn start_logger(matches: &ArgMatches) -> Result<(), SetLoggerError> {
+fn start_logger(matches: &ArgMatches) -> anyhow::Result<()> {
     let level = matches.get_count("VERBOSE");
     let level = match level {
         2 => LevelFilter::Trace,
         1 => LevelFilter::Debug,
         0 => LevelFilter::Info,
-        _ => {
-            error!("Too many -v flags");
-            LevelFilter::Trace
-        }
+        _ => LevelFilter::Trace,
     };
 
     TermLogger::init(
         level,
-        Config::default(),
+        ConfigBuilder::new()
+            .set_time_level(LevelFilter::Off)
+            .build(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
-    )
+    )?;
+
+    info!("Logger started at level {}", level);
+
+    Ok(())
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
-    let conf = EnvConf::new()?;
+fn run(conf: EnvConf) -> Result<(), Box<dyn Error>> {
+    let repo_str = conf.get_env("SERVER_SYNC_REPO_STORAGE").unwrap();
+    let repo_dir = Path::new(&repo_str);
+    sync_repository(&conf, &repo_dir)?;
+
     let mut handlebars = new_handlerbars().context("Initialize handlebars")?;
 
-    sync_repository(&conf)?;
-
-    debug!("Destination root: {}", &conf.destination_root.display());
     debug!("Variables: {:?}", &conf.get_variables());
 
     for context in conf.get_contexts() {
@@ -82,29 +125,45 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn sync_repository(conf: &EnvConf) -> Result<(), Box<dyn Error>> {
-    let current_dir = env::current_dir()?;
+fn git_output(cmd: &mut Command, context: String) -> anyhow::Result<()> {
+    let output = cmd.output().context(context)?;
+    trace!(
+        "Git output -> <blue>{}",
+        String::from_utf8_lossy(&output.stdout).trim()
+    );
 
-    let output = Command::new("git")
-        .current_dir(&current_dir)
-        .arg("pull")
-        .arg(conf.get_env("GIT_REMOTE").unwrap_or(&"origin".to_string()))
-        .arg(conf.get_env("GIT_BRANCH").unwrap_or(&"master".to_string()))
-        .output()?;
+    Ok(())
+}
 
-    let output_str = String::from_utf8_lossy(&output.stdout);
+fn sync_repository(conf: &EnvConf, repo_dir: &Path) -> anyhow::Result<()> {
+    let repo_url = conf.get_env("SERVER_SYNC_REPO").unwrap();
+    let repo_branch = conf
+        .get_env("SERVER_SYNC_BRANCH")
+        .unwrap_or("master".to_string());
 
-    if !output.status.success() {
-        return Err(Box::<dyn Error>::from(format!(
-            "Failed to synchronize with repository! Error: {}",
-            &output_str
-        )));
-    } else if &output_str == "Already up to date." {
-        info!("Repository is already up to date!");
+    if !repo_dir.exists() {
+        info!("Cloning repository {}", &repo_url);
+
+        let mut cmd = Command::new("git");
+        cmd.arg("clone").arg(&repo_url).arg(&repo_dir);
+        git_output(&mut cmd, "Clone repository".to_string())?;
     } else {
-        info!("Successfully synchronized with repository!");
-        debug!("Git pull output -> {}", &output_str);
+        info!("Updating repository {}", &repo_url);
+
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(&repo_dir).arg("pull");
+        git_output(&mut cmd, "Update repository".to_string())?;
     }
+
+    info!("Checking out branch {}", &repo_branch);
+
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(&repo_dir)
+        .arg("checkout")
+        .arg(&repo_branch);
+
+    git_output(&mut cmd, "Checkout branch".to_string())?;
 
     Ok(())
 }
@@ -161,8 +220,6 @@ fn walk_directory(
 }
 
 fn get_contents<P: AsRef<Path>>(path: P) -> Option<String> {
-
-
     let mut source = vec![];
     File::open(path).unwrap().read_to_end(&mut source).unwrap();
     return match simdutf8::basic::from_utf8(&source) {
@@ -207,9 +264,7 @@ fn check_existing(destination: &Path, rendered: &String) -> anyhow::Result<bool>
             ChangeTag::Equal => continue,
         };
 
-        change.to_string().retain(|c| c != '\n');
-
-        info!("{} {}", sign, change);
+        info!("{} {}", sign, change.to_string().trim());
     }
 
     if diff.ratio() == 1.0 {
@@ -243,7 +298,7 @@ fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
         .map(|uid| file_owner::Owner::from(uid.parse::<u32>().unwrap()))
         .or_else(|| {
             conf.get_env("USER")
-                .map(|user| file_owner::Owner::from_name(user).unwrap())
+                .map(|user| file_owner::Owner::from_name(&user).unwrap())
         })
         .context("Getting UID or USER environment variable")?;
 
@@ -252,9 +307,9 @@ fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
         .map(|gid| file_owner::Group::from(gid.parse::<u32>().unwrap()))
         .or_else(|| {
             conf.get_env("GROUP")
-                .map(|group| file_owner::Group::from_name(group).unwrap())
+                .map(|group| file_owner::Group::from_name(&group).unwrap())
         })
-        .context("Getting GID or GROUP environment variable")?;
+        .unwrap_or(file_owner::Group::from_gid(owner.id()));
 
     file_owner::set_owner_group(path, owner, group)?;
 
