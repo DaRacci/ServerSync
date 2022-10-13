@@ -13,7 +13,7 @@ jobs:
         include:
           - build: linux
             os: ubuntu-latest
-            file: server-sync
+            file: server_sync
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Repo
