@@ -113,8 +113,13 @@ fn _get_env(env: &str, matches: &ArgMatches, file: &Option<EnvFile>) -> Option<S
     }
 
     if let Ok(env) = std::env::var(env) {
-        trace!("Found {} in system env", env);
+        trace!("Found {} in process env", env);
         return Some(env);
+    }
+
+    if let Some(env) = std::env::var_os(env) {
+        trace!("Found {} in system env", env.to_string_lossy());
+        return Some(env.to_string_lossy().to_string());
     }
 
     trace!("Couldn't find {} in any env", env);

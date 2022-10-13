@@ -10,7 +10,7 @@ description = "Syncronizes your server with a git repository and supports templa
 license = "MIT"
 readme = "README.md"
 
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 
 [dependencies]

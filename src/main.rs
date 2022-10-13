@@ -4,13 +4,13 @@ use crate::config::{EnvConf, ServerContext};
 use anyhow::{format_err, Context};
 use clap::{command, Arg, ArgAction, ArgMatches};
 use handlebars::Handlebars;
-use similar::{ChangeTag, TextDiff};
+use similar::{ChangeTag, DiffableStr, TextDiff};
 use simplelog::__private::log::SetLoggerError;
 use simplelog::{
     debug, error, info, trace, Color, ColorChoice, Config, ConfigBuilder, LevelFilter, TermLogger,
     TerminalMode,
 };
-use std::env::current_dir;
+use std::env::{current_dir, vars_os};
 use std::error::Error;
 use std::fs::{create_dir_all, rename, File, Permissions};
 use std::io::{Read, Write};
