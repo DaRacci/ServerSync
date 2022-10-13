@@ -12,7 +12,7 @@ use simplelog::{
 };
 use std::env::{current_dir, vars_os};
 use std::error::Error;
-use std::fs::{create_dir_all, rename, File, Permissions};
+use std::fs::{create_dir_all, read, rename, File, Permissions};
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -187,6 +187,8 @@ fn walk_directory(
         .filter(|e| e.as_ref().unwrap().file_type().is_file())
         .map(|e| e.unwrap());
 
+    let mut non_utf8 = vec![];
+
     for entry in walker {
         let relative_path = entry.path().strip_prefix(&context.source_root)?;
         let destination_path = conf.destination_root.join(relative_path);
@@ -194,7 +196,10 @@ fn walk_directory(
         trace!("Processing file {}", relative_path.display());
 
         let contents = match get_contents(entry.path()) {
-            None => continue,
+            None => {
+                non_utf8.push((entry.path().to_owned(), destination_path));
+                continue;
+            }
             Some(value) => value,
         };
 
@@ -221,6 +226,24 @@ fn walk_directory(
         }
 
         fix_permissions(&destination_path, &conf)?;
+    }
+
+    // TODO -> This is a bit of a hack, but it works for now.
+    for (source, dest) in non_utf8 {
+        let mut buf = read(source)?;
+        if let Ok(existing) = read(&dest) {
+            if buf == existing {
+                continue;
+            }
+
+            let backup_path = Path::new(&dest).with_extension("bak");
+            rename(&dest, &backup_path)?;
+
+            let mut file = File::create(&dest)?;
+            file.write_all(&buf)?;
+        }
+
+        fix_permissions(&dest, &conf)?;
     }
 
     Ok(())
