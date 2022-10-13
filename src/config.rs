@@ -87,11 +87,17 @@ impl EnvConf {
     }
 
     pub fn get_variables(&self) -> BTreeMap<String, String> {
-        if self.file.is_none() {
-            return BTreeMap::new();
-        }
+        let mut mut_map = if self.file.is_none() {
+            BTreeMap::new()
+        } else {
+            self.file.as_ref().unwrap().store.clone()
+        };
 
-        return self.file.as_ref().unwrap().store.clone();
+        std::env::vars().for_each(|(k, v)| {
+            mut_map.insert(k, v);
+        });
+
+        return mut_map;
     }
 
     pub fn get_contexts(&self) -> &[ServerContext] {
