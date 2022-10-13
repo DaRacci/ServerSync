@@ -132,7 +132,7 @@ fn walk_directory(
             Some(value) => value,
         };
 
-        let rendered = render_entry(handlebars, &context, &conf, &contents)?;
+        let rendered = render_entry(handlebars, &context, &conf, &contents, &entry)?;
         let parent = destination_path.parent().expect("File was at / level???");
 
         trace!(
@@ -146,7 +146,7 @@ fn walk_directory(
             create_dir_all(&parent)?;
         }
 
-        if check_existing(&destination_path, &rendered) {
+        if check_existing(&destination_path, &rendered)? {
             debug!("File {} is up to date", destination_path.display());
         } else {
             trace!("Writing {}", destination_path.display());
@@ -174,6 +174,7 @@ fn render_entry(
     context: &ServerContext,
     conf: &EnvConf,
     contents: &String,
+    entry: &DirEntry,
 ) -> anyhow::Result<String> {
     let mut variables_cloned = conf.get_variables().clone();
     variables_cloned.insert(String::from("server_name"), context.name.to_owned());
@@ -186,13 +187,13 @@ fn render_entry(
         .context("Rendering template");
 }
 
-fn check_existing(destination: &Path, rendered: &String) -> bool {
+fn check_existing(destination: &Path, rendered: &String) -> anyhow::Result<bool> {
     if destination.exists() {
-        return false;
+        return Ok(false);
     }
 
     let existing_contents = match get_contents(&destination) {
-        None => return false,
+        None => return Ok(false),
         Some(value) => value,
     };
 
@@ -208,15 +209,15 @@ fn check_existing(destination: &Path, rendered: &String) -> bool {
     }
 
     if diff.ratio() == 1.0 {
-        return true;
+        return Ok(true);
     }
 
     trace!("Backing up {}", destination.display());
 
-    backup_path = Path::new(&destination).with_extension("bak");
+    let backup_path = Path::new(&destination).with_extension("bak");
     rename(&destination, &backup_path)?;
 
-    return false;
+    return Ok(false);
 }
 
 fn new_handlerbars<'a, 'b>() -> anyhow::Result<Handlebars<'b>> {
@@ -235,11 +236,11 @@ fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
 
     let owner_name = conf
         .get_env("UID")
-        .or_else(conf.get_env("USER"))
+        .or(conf.get_env("USER"))
         .context("Getting USER or UID environment variable")?;
     let group_name = conf
         .get_env("GID")
-        .or_else(conf.get_env("GROUP"))
+        .or(conf.get_env("GROUP"))
         .context("Getting GROUP or GID environment variable")?;
 
     let owner = file_owner::Owner::from_name(&owner_name)?;
