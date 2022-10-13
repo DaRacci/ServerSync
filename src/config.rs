@@ -8,7 +8,7 @@ use simplelog::{debug, trace, warn};
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::BufRead;
-use std::path::PathBuf;
+use std::path::{PathBuf};
 
 pub struct ServerContext {
     pub name: String,
@@ -16,11 +16,8 @@ pub struct ServerContext {
 }
 
 impl ServerContext {
-    pub fn new(name: String) -> anyhow::Result<Self> {
-        let source_root = std::env::current_dir()
-            .unwrap()
-            .join("contexts/")
-            .join(&name);
+    pub fn new(name: String, repo_path: &str) -> anyhow::Result<Self> {
+        let source_root = PathBuf::from(repo_path).join("contexts/").join(&name);
 
         if !source_root.exists() || !source_root.is_dir() {
             return Err(format_err!(
@@ -54,6 +51,9 @@ impl EnvConf {
         let file = EnvFile::new(matches.get_one::<String>("SERVER_SYNC_ENV").unwrap()).ok();
         let raw_destination = _get_env("SERVER_SYNC_DESTINATION", &matches, &file)
             .context("Get destination for sync")?;
+
+        let repo_path = _get_env("SERVER_SYNC_REPO", &matches, &file).context("Get repository path")?;
+
         let contexts = matches
             .get_many::<String>("SERVER_SYNC_CONTEXTS")
             .map(|v| v.map(|s| s.to_string()).collect::<Vec<_>>())
@@ -62,7 +62,11 @@ impl EnvConf {
                     .map(|s| s.split(',').map(|s| s.to_string()).collect::<Vec<_>>())
                     .unwrap_or_default()
             }))
-            .map(|v| v.into_iter().map(|s| ServerContext::new(s).unwrap()).collect::<Vec<_>>())
+            .map(|v| {
+                v.into_iter()
+                    .map(|s| ServerContext::new(s, &repo_path).unwrap())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
 
         debug!("Contexts: {:?}", contexts);
