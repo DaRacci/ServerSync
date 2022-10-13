@@ -207,6 +207,8 @@ fn check_existing(destination: &Path, rendered: &String) -> anyhow::Result<bool>
             ChangeTag::Equal => continue,
         };
 
+        change.to_string().retain(|c| c != '\n');
+
         info!("{} {}", sign, change);
     }
 
