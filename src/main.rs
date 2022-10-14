@@ -107,9 +107,9 @@ fn start_logger(matches: &ArgMatches) -> anyhow::Result<()> {
 }
 
 fn run(conf: EnvConf) -> anyhow::Result<()> {
-    let repo_str = conf.get_env("SERVER_SYNC_REPO_STORAGE").unwrap();
+    let repo_str = conf.get_env("SERVER_SYNC_REPO_STORAGE").context("Get repo storage location")?;
     let repo_dir = Path::new(&repo_str);
-    sync_repository(&conf, &repo_dir)?;
+    sync_repository(&conf, &repo_dir).context("Sync repo")?;
 
     let mut handlebars = new_handlerbars().context("Initialize handlebars")?;
 
@@ -126,7 +126,7 @@ fn run(conf: EnvConf) -> anyhow::Result<()> {
         info!("Processing context {}", context.name);
         debug!("Source root: {}", context.source_root.display());
 
-        walk_directory(&mut handlebars, &context, &conf)?;
+        walk_directory(&mut handlebars, &context, &conf).context("Walk directory")?;
     }
 
     Ok(())
@@ -190,7 +190,7 @@ fn walk_directory(
     let mut non_utf8 = vec![];
 
     for entry in walker {
-        let relative_path = entry.path().strip_prefix(&context.source_root)?;
+        let relative_path = entry.path().strip_prefix(&context.source_root).context("Get relative path")?;
         let destination_path = conf.destination_root.join(relative_path);
 
         trace!("Processing file {}", relative_path.display());
@@ -203,7 +203,7 @@ fn walk_directory(
             Some(value) => value,
         };
 
-        let rendered = render_entry(handlebars, &context, &conf, &contents, &entry)?;
+        let rendered = render_entry(handlebars, &context, &conf, &contents, &entry).context("Render source")?;
         let parent = destination_path.parent().expect("File was at / level???");
 
         trace!(
@@ -214,7 +214,7 @@ fn walk_directory(
 
         if !parent.exists() {
             debug!("Creating new directory {}", destination_path.display());
-            create_dir_all(&parent)?;
+            create_dir_all(&parent).context("Create needed directories")?;
         }
 
         if check_existing(&destination_path, &rendered)? {
@@ -230,20 +230,20 @@ fn walk_directory(
 
     // TODO -> This is a bit of a hack, but it works for now.
     for (source, dest) in non_utf8 {
-        let mut buf = read(source)?;
-        if let Ok(existing) = read(&dest) {
+        let mut buf = read(source).context("Read source file")?;
+        if let Ok(existing) = read(&dest).context("Read existing file") {
             if buf == existing {
                 continue;
             }
 
             let backup_path = Path::new(&dest).with_extension("bak");
-            rename(&dest, &backup_path)?;
+            rename(&dest, &backup_path).context("Rename old file")?;
 
-            let mut file = File::create(&dest)?;
+            let mut file = File::create(&dest).context("Create new file")?;
             file.write_all(&buf)?;
         }
 
-        fix_permissions(&dest, &conf)?;
+        fix_permissions(&dest, &conf).context("Ensure file has correct permissions")?;
     }
 
     Ok(())
@@ -321,7 +321,7 @@ fn new_handlerbars<'a, 'b>() -> anyhow::Result<Handlebars<'b>> {
 }
 
 fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
-    fs::set_permissions(path, Permissions::from_mode(0o644))?;
+    fs::set_permissions(path, Permissions::from_mode(0o644)).context("Set permissions")?;
 
     let owner = conf
         .get_env("UID")
@@ -341,7 +341,7 @@ fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
         })
         .unwrap_or(file_owner::Group::from_gid(owner.id()));
 
-    file_owner::set_owner_group(path, owner, group)?;
+    file_owner::set_owner_group(path, owner, group).context("Setting file owner and group")?;
 
     Ok(())
 }
