@@ -12,8 +12,8 @@ use simplelog::{
 };
 use std::env::{current_dir, vars_os};
 use std::error::Error;
-use std::fs::{create_dir_all, read, rename, File, Permissions};
-use std::io::{Read, Write};
+use std::fs::{create_dir, create_dir_all, read, rename, set_permissions, File, Permissions};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{exit, Command};
@@ -107,7 +107,9 @@ fn start_logger(matches: &ArgMatches) -> anyhow::Result<()> {
 }
 
 fn run(conf: EnvConf) -> anyhow::Result<()> {
-    let repo_str = conf.get_env("SERVER_SYNC_REPO_STORAGE").context("Get repo storage location")?;
+    let repo_str = conf
+        .get_env("SERVER_SYNC_REPO_STORAGE")
+        .context("Get repo storage location")?;
     let repo_dir = Path::new(&repo_str);
     sync_repository(&conf, &repo_dir).context("Sync repo")?;
 
@@ -126,7 +128,7 @@ fn run(conf: EnvConf) -> anyhow::Result<()> {
         info!("Processing context {}", context.name);
         debug!("Source root: {}", context.source_root.display());
 
-        walk_directory(&mut handlebars, &context, &conf).context("Walk directory")?;
+        walk_directory(&mut handlebars, &context, &conf)?;
     }
 
     Ok(())
@@ -190,7 +192,10 @@ fn walk_directory(
     let mut non_utf8 = vec![];
 
     for entry in walker {
-        let relative_path = entry.path().strip_prefix(&context.source_root).context("Get relative path")?;
+        let relative_path = entry
+            .path()
+            .strip_prefix(&context.source_root)
+            .context("Get relative path")?;
         let destination_path = conf.destination_root.join(relative_path);
 
         trace!("Processing file {}", relative_path.display());
@@ -203,7 +208,8 @@ fn walk_directory(
             Some(value) => value,
         };
 
-        let rendered = render_entry(handlebars, &context, &conf, &contents, &entry).context("Render source")?;
+        let rendered = render_entry(handlebars, &context, &conf, &contents, &entry)
+            .context("Render source")?;
         let parent = destination_path.parent().expect("File was at / level???");
 
         trace!(
@@ -212,9 +218,16 @@ fn walk_directory(
             &destination_path.display()
         );
 
-        if !parent.exists() {
-            debug!("Creating new directory {}", destination_path.display());
-            create_dir_all(&parent).context("Create needed directories")?;
+        let ancestors_dirs = parent
+            .ancestors()
+            .filter(|a| a.starts_with(&conf.destination_root));
+
+        for ancestor in ancestors_dirs {
+            if !ancestor.exists() {
+                create_dir(ancestor).context("Create ancestor directory")?;
+            }
+
+            fix_permissions(&ancestor, &conf)?;
         }
 
         if check_existing(&destination_path, &rendered)? {
@@ -321,7 +334,7 @@ fn new_handlerbars<'a, 'b>() -> anyhow::Result<Handlebars<'b>> {
 }
 
 fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
-    fs::set_permissions(path, Permissions::from_mode(0o644)).context("Set permissions")?;
+    set_permissions(path, Permissions::from_mode(0o644)).context("Set permissions")?;
 
     let owner = conf
         .get_env("UID")
