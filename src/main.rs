@@ -1,4 +1,5 @@
 mod config;
+mod file_system;
 
 use crate::config::{EnvConf, ServerContext};
 use anyhow::{format_err, Context};
@@ -18,7 +19,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{exit, Command};
 use std::{env, fs};
+use std::borrow::Borrow;
+use file_owner::{group, owner};
 use walkdir::{DirEntry, WalkDir};
+use crate::file_system::FileSystem;
 
 fn main() {
     let cli = get_cli();
@@ -30,6 +34,8 @@ fn main() {
             exit(19)
         }
     };
+
+    let file_system = FileSystem::new(conf.borrow::<'static>()).unwrap();
 
     match run(conf) {
         Ok(_) => {
@@ -106,7 +112,7 @@ fn start_logger(matches: &ArgMatches) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run(conf: EnvConf) -> anyhow::Result<()> {
+fn run(conf: EnvConf, file_system: FileSystem) -> anyhow::Result<()> {
     let repo_str = conf
         .get_env("SERVER_SYNC_REPO_STORAGE")
         .context("Get repo storage location")?;
@@ -116,6 +122,8 @@ fn run(conf: EnvConf) -> anyhow::Result<()> {
     let mut handlebars = new_handlerbars().context("Initialize handlebars")?;
 
     debug!("Variables: {:?}", &conf.get_variables());
+
+    file_system.sync(&conf, &mut handlebars)?;
 
     for context in conf.get_contexts() {
         if !context.source_root.exists() || !context.source_root.is_dir() {
@@ -196,9 +204,22 @@ fn walk_directory(
             .path()
             .strip_prefix(&context.source_root)
             .context("Get relative path")?;
-        let destination_path = conf.destination_root.join(relative_path);
 
-        trace!("Processing file {}", relative_path.display());
+        let destination_path = conf.destination_root.join(&relative_path);
+        let parent = &destination_path.parent().expect("File was at / level???");
+
+        let ancestors_dirs = parent
+            .ancestors()
+            .filter(|a| a.starts_with(&conf.destination_root));
+
+        for ancestor in ancestors_dirs {
+            if !ancestor.exists() {
+                trace!("Creating directory {}", ancestor.display());
+                create_dir(ancestor).context("Create ancestor directory")?;
+            }
+
+            fix_permissions(&ancestor, &conf)?;
+        }
 
         let contents = match get_contents(entry.path()) {
             None => {
@@ -208,27 +229,16 @@ fn walk_directory(
             Some(value) => value,
         };
 
+        trace!("Processing file {}", relative_path.display());
+
         let rendered = render_entry(handlebars, &context, &conf, &contents, &entry)
             .context("Render source")?;
-        let parent = destination_path.parent().expect("File was at / level???");
 
         trace!(
             "Templating {} to {}",
             &entry.path().display(),
             &destination_path.display()
         );
-
-        let ancestors_dirs = parent
-            .ancestors()
-            .filter(|a| a.starts_with(&conf.destination_root));
-
-        for ancestor in ancestors_dirs {
-            if !ancestor.exists() {
-                create_dir(ancestor).context("Create ancestor directory")?;
-            }
-
-            fix_permissions(&ancestor, &conf)?;
-        }
 
         if check_existing(&destination_path, &rendered)? {
             debug!("File {} is up to date", destination_path.display());
@@ -243,6 +253,12 @@ fn walk_directory(
 
     // TODO -> This is a bit of a hack, but it works for now.
     for (source, dest) in non_utf8 {
+        trace!(
+            "Processing non-utf8 file {} to destination {}",
+            source.display(),
+            dest.display()
+        );
+
         let mut buf = read(source).context("Read source file")?;
         if let Ok(existing) = read(&dest).context("Read existing file") {
             if buf == existing {
@@ -251,10 +267,10 @@ fn walk_directory(
 
             let backup_path = Path::new(&dest).with_extension("bak");
             rename(&dest, &backup_path).context("Rename old file")?;
-
-            let mut file = File::create(&dest).context("Create new file")?;
-            file.write_all(&buf)?;
         }
+
+        let mut file = File::create(&dest).context("Create new file")?;
+        file.write_all(&buf)?;
 
         fix_permissions(&dest, &conf).context("Ensure file has correct permissions")?;
     }
@@ -334,7 +350,18 @@ fn new_handlerbars<'a, 'b>() -> anyhow::Result<Handlebars<'b>> {
 }
 
 fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
-    set_permissions(path, Permissions::from_mode(0o644)).context("Set permissions")?;
+    // Set permission to 755 for directories, 644 for files
+    let mut perms = Permissions::from_mode(0o644);
+    if path.is_dir() {
+        perms = Permissions::from_mode(0o755);
+    }
+
+    let perm = if path.is_dir() {
+        Permissions::from_mode(0o755)
+    } else {
+        Permissions::from_mode(0o644)
+    };
+    set_permissions(path, perm).context("Set permissions")?;
 
     let owner = conf
         .get_env("UID")

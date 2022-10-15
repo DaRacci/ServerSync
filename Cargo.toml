@@ -10,7 +10,7 @@ description = "Syncronizes your server with a git repository and supports templa
 license = "MIT"
 readme = "README.md"
 
-version = "0.2.10"
+version = "0.3.0-SNAPSHOT"
 edition = "2021"
 
 [dependencies]
@@ -23,3 +23,4 @@ similar = "2.2.0"
 clap = { version = "4.0.13", features = ["derive", "cargo", "env"] }
 file-owner = "0.1.1"
 simdutf8 = "0.1.4"
+toml_edit = "0.14.4"

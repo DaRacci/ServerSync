@@ -1,5 +1,6 @@
 use envfile::EnvFile;
 use std::borrow::Borrow;
+use std::clone::Clone;
 
 use anyhow::{format_err, Context};
 use clap::builder::TypedValueParser;
@@ -7,12 +8,23 @@ use clap::ArgMatches;
 use simplelog::{debug, trace, warn};
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Display, Formatter};
+use std::hash::Hash;
 use std::io::BufRead;
 use std::path::PathBuf;
 
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ServerContext {
     pub name: String,
     pub source_root: PathBuf,
+}
+
+impl Clone for ServerContext {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            source_root: self.source_root.clone(),
+        }
+    }
 }
 
 impl ServerContext {
@@ -20,12 +32,6 @@ impl ServerContext {
         let source_root = PathBuf::from(repo_path).join("contexts/").join(&name);
 
         Ok(Self { name, source_root })
-    }
-}
-
-impl Debug for ServerContext {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
     }
 }
 
@@ -84,6 +90,16 @@ impl EnvConf {
 
     pub fn get_env(&self, env: &str) -> Option<String> {
         return _get_env(env, &self.matches, &self.file);
+    }
+
+    pub fn get_first_env(&self, envs: &[&str]) -> Option<String> {
+        for env in envs {
+            if let Some(value) = self.get_env(env) {
+                return Some(value);
+            }
+        }
+
+        None
     }
 
     pub fn get_variables(&self) -> BTreeMap<String, String> {
