@@ -334,7 +334,17 @@ fn new_handlerbars<'a, 'b>() -> anyhow::Result<Handlebars<'b>> {
 }
 
 fn fix_permissions(path: &Path, conf: &EnvConf) -> anyhow::Result<()> {
-    set_permissions(path, Permissions::from_mode(0o644)).context("Set permissions")?;
+    if path.is_symlink() {
+        return Ok(());
+    }
+
+    let permission = if path.is_dir() {
+        Permissions::from_mode(0o755)
+    } else {
+        Permissions::from_mode(0o644)
+    };
+
+    set_permissions(path, permission).context("Set permissions")?;
 
     let owner = conf
         .get_env("UID")
