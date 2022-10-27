@@ -268,9 +268,13 @@ fn backup_and_write(destination: &Path, contents: &[u8]) -> anyhow::Result<()> {
 fn ensure_ancestors(parent: &Path, conf: &EnvConf) -> anyhow::Result<()> {
     let ancestors_dirs = parent
         .ancestors()
-        .filter(|a| a.starts_with(&conf.destination_root));
+        .collect::<Vec<&Path>>();
 
-    for ancestor in ancestors_dirs {
+    for ancestor in ancestors_dirs.iter().rev() {
+        if ancestor.starts_with(&conf.destination_root) {
+            continue;
+        }
+
         if !ancestor.exists() {
             create_dir(ancestor).context("Create ancestor directory")?;
         }
