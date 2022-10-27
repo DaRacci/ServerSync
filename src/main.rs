@@ -234,7 +234,10 @@ fn walk_directory(
     for (source, dest) in non_utf8 {
         trace!("Processing file {}", source.display());
 
-        ensure_ancestors(&dest.parent().context("Get destination parent folder.")?, &conf)?;
+        ensure_ancestors(
+            &dest.parent().context("Get destination parent folder.")?,
+            &conf,
+        )?;
 
         let buf = read(source).context("Read source file")?;
         if read(&dest)
@@ -254,9 +257,11 @@ fn walk_directory(
 }
 
 fn backup_and_write(destination: &Path, contents: &[u8]) -> anyhow::Result<()> {
-    trace!("Backing up {}", destination.display());
-    let backup_path = Path::new(&destination).with_extension("bak");
-    rename(&destination, &backup_path).context("Rename old file")?;
+    if destination.exists() {
+        trace!("Backing up {}", destination.display());
+        let backup_path = Path::new(&destination).with_extension("bak");
+        rename(&destination, &backup_path).context("Rename old file")?;
+    }
 
     trace!("Writing {}", destination.display());
     let mut file = File::create(&destination).context("Create file at destination")?;
@@ -266,9 +271,7 @@ fn backup_and_write(destination: &Path, contents: &[u8]) -> anyhow::Result<()> {
 }
 
 fn ensure_ancestors(parent: &Path, conf: &EnvConf) -> anyhow::Result<()> {
-    let ancestors_dirs = parent
-        .ancestors()
-        .collect::<Vec<&Path>>();
+    let ancestors_dirs = parent.ancestors().collect::<Vec<&Path>>();
 
     for ancestor in ancestors_dirs.iter().rev() {
         if !ancestor.starts_with(&conf.destination_root) {
