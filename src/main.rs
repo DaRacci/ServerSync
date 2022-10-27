@@ -3,6 +3,7 @@ mod config;
 use crate::config::{EnvConf, ServerContext};
 use anyhow::{format_err, Context};
 use clap::{command, Arg, ArgAction, ArgMatches};
+use file_owner::{group, owner};
 use handlebars::Handlebars;
 use similar::{ChangeTag, DiffableStr, TextDiff};
 use simplelog::__private::log::SetLoggerError;
@@ -218,24 +219,12 @@ fn walk_directory(
             &destination_path.display()
         );
 
-        let ancestors_dirs = parent
-            .ancestors()
-            .filter(|a| a.starts_with(&conf.destination_root));
-
-        for ancestor in ancestors_dirs {
-            if !ancestor.exists() {
-                create_dir(ancestor).context("Create ancestor directory")?;
-            }
-
-            fix_permissions(&ancestor, &conf)?;
-        }
+        ensure_ancestors(parent, &conf)?;
 
         if check_existing(&destination_path, &rendered)? {
             debug!("File {} is up to date", destination_path.display());
         } else {
-            trace!("Writing {}", destination_path.display());
-            let mut file = File::create(&destination_path)?;
-            file.write_all(rendered.as_bytes())?;
+            backup_and_write(&destination_path, rendered.as_bytes())?;
         }
 
         fix_permissions(&destination_path, &conf)?;
@@ -245,21 +234,48 @@ fn walk_directory(
     for (source, dest) in non_utf8 {
         trace!("Processing file {}", source.display());
 
-        let mut buf = read(source).context("Read source file")?;
-        if let Ok(existing) = read(&dest).context("Read existing file") {
-            if buf == existing {
-                debug!("File {} is up to date", dest.display());
-                continue;
-            }
+        ensure_ancestors(&dest.parent().context("Get destination parent folder.")?, &conf)?;
 
-            let backup_path = Path::new(&dest).with_extension("bak");
-            rename(&dest, &backup_path).context("Rename old file")?;
+        let buf = read(source).context("Read source file")?;
+        if read(&dest)
+            .context("Read existing file")
+            .map(|e| e == buf)
+            .unwrap_or(false)
+        {
+            debug!("File {} is up to date", dest.display());
+        } else {
+            backup_and_write(&dest, &buf)?;
         }
 
-        let mut file = File::create(&dest).context("Create new file")?;
-        file.write_all(&buf).context("Write out all bytes")?;
-
         fix_permissions(&dest, &conf)?;
+    }
+
+    Ok(())
+}
+
+fn backup_and_write(destination: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    trace!("Backing up {}", destination.display());
+    let backup_path = Path::new(&destination).with_extension("bak");
+    rename(&destination, &backup_path).context("Rename old file")?;
+
+    trace!("Writing {}", destination.display());
+    let mut file = File::create(&destination).context("Create file at destination")?;
+    file.write_all(contents).context("Write out all bytes")?;
+
+    Ok(())
+}
+
+fn ensure_ancestors(parent: &Path, conf: &EnvConf) -> anyhow::Result<()> {
+    let ancestors_dirs = parent
+        .ancestors()
+        .filter(|a| a.starts_with(&conf.destination_root));
+
+    for ancestor in ancestors_dirs {
+        if !ancestor.exists() {
+            create_dir(ancestor).context("Create ancestor directory")?;
+        }
+
+        fix_permissions(&ancestor, &conf)?;
     }
 
     Ok(())
@@ -316,11 +332,6 @@ fn check_existing(destination: &Path, rendered: &String) -> anyhow::Result<bool>
     if diff.ratio() == 1.0 {
         return Ok(true);
     }
-
-    trace!("Backing up {}", destination.display());
-
-    let backup_path = Path::new(&destination).with_extension("bak");
-    rename(&destination, &backup_path)?;
 
     return Ok(false);
 }
