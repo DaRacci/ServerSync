@@ -15,23 +15,23 @@ use std::path::PathBuf;
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ServerContext {
     pub name: String,
-    pub source_root: PathBuf,
+    pub context_root: PathBuf,
 }
 
 impl Clone for ServerContext {
     fn clone(&self) -> Self {
         Self {
             name: self.name.clone(),
-            source_root: self.source_root.clone(),
+            context_root: self.context_root.clone(),
         }
     }
 }
 
 impl ServerContext {
     pub fn new(name: String, repo_path: &str) -> anyhow::Result<Self> {
-        let source_root = PathBuf::from(repo_path).join("contexts/").join(&name);
+        let context_root = PathBuf::from(repo_path).join("contexts/").join(&name);
 
-        Ok(Self { name, source_root })
+        Ok(Self { name, context_root })
     }
 }
 

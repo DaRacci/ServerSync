@@ -1,32 +1,89 @@
 mod config;
 mod file_system;
+mod merger;
+mod merge_toml;
 
 use crate::config::{EnvConf, ServerContext};
+use crate::file_system::FileSystem;
 use anyhow::{format_err, Context};
 use clap::{command, Arg, ArgAction, ArgMatches};
+use file_owner::{group, owner};
 use handlebars::Handlebars;
+use merge_yaml_hash::MergeYamlHash;
+use regex::internal::Input;
 use similar::{ChangeTag, DiffableStr, TextDiff};
-use simplelog::__private::log::SetLoggerError;
+use simplelog::__private::log::{logger, SetLoggerError};
 use simplelog::{
     debug, error, info, trace, Color, ColorChoice, Config, ConfigBuilder, LevelFilter, TermLogger,
     TerminalMode,
 };
+use std::borrow::Borrow;
+use std::cmp::Ordering;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::BTreeMap;
 use std::env::{current_dir, vars_os};
 use std::error::Error;
 use std::fs::{create_dir, create_dir_all, read, rename, set_permissions, File, Permissions};
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::{ErrorKind, Read, Write};
+use std::ops::Deref;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{exit, Command};
+use std::ptr::hash;
 use std::{env, fs};
-use std::borrow::Borrow;
-use file_owner::{group, owner};
 use walkdir::{DirEntry, WalkDir};
-use crate::file_system::FileSystem;
+
+fn this() {
+    let baseline = r#"
+a:
+  b:
+    c: lmao
+    "#;
+
+    let insertion = r#"
+    a:
+      b:
+        c: rofl
+        d: r
+        e:
+          l: one
+    "#;
+
+    let mut hash = MergeYamlHash::new();
+
+    // Merge YAML data from strings
+    hash.merge(baseline);
+    hash.merge(insertion);
+
+    let new_yaml = hash.to_string();
+    let diff = TextDiff::from_lines(baseline, new_yaml.as_str());
+    for change in diff.iter_all_changes() {
+        let sign = match change.tag() {
+            ChangeTag::Delete => "<red>-",
+            ChangeTag::Insert => "<green>+",
+            ChangeTag::Equal => continue,
+        };
+
+        let raw = change.to_string();
+        for char in raw.chars() {
+            print!("{}", char.escape_unicode());
+        }
+        info!("{} {}", sign, change.to_string().trim());
+    }
+
+    println!("{}", new_yaml);
+
+    ()
+}
 
 fn main() {
     let cli = get_cli();
     start_logger(&cli).context("Init logger").unwrap();
+    this();
+    return;
+
     let conf = match EnvConf::new(cli) {
         Ok(value) => value,
         Err(err) => {
@@ -35,9 +92,9 @@ fn main() {
         }
     };
 
-    let file_system = FileSystem::new(conf.borrow::<'static>()).unwrap();
+    let file_system = FileSystem::new(conf.borrow::<'static>()).ok().unwrap();
 
-    match run(conf) {
+    match run(conf, file_system) {
         Ok(_) => {
             info!("Done!");
             exit(0)
@@ -123,18 +180,18 @@ fn run(conf: EnvConf, file_system: FileSystem) -> anyhow::Result<()> {
 
     debug!("Variables: {:?}", &conf.get_variables());
 
-    file_system.sync(&conf, &mut handlebars)?;
+    file_system.sync(&mut handlebars)?;
 
     for context in conf.get_contexts() {
-        if !context.source_root.exists() || !context.source_root.is_dir() {
+        if !context.context_root.exists() || !context.context_root.is_dir() {
             return return Err(format_err!(
                 "Server source root doesn't exist or is not a directory: {}",
-                context.source_root.display()
+                context.context_root.display()
             ));
         }
 
         info!("Processing context {}", context.name);
-        debug!("Source root: {}", context.source_root.display());
+        debug!("Source root: {}", context.context_root.display());
 
         walk_directory(&mut handlebars, &context, &conf)?;
     }
@@ -190,7 +247,7 @@ fn walk_directory(
     context: &ServerContext,
     conf: &EnvConf,
 ) -> anyhow::Result<()> {
-    let walker = WalkDir::new(&context.source_root)
+    let walker = WalkDir::new(&context.context_root)
         .same_file_system(true)
         .into_iter()
         .filter(|e| e.is_ok())
@@ -202,7 +259,7 @@ fn walk_directory(
     for entry in walker {
         let relative_path = entry
             .path()
-            .strip_prefix(&context.source_root)
+            .strip_prefix(&context.context_root)
             .context("Get relative path")?;
 
         let destination_path = conf.destination_root.join(&relative_path);
@@ -259,7 +316,7 @@ fn walk_directory(
             dest.display()
         );
 
-        let mut buf = read(source).context("Read source file")?;
+        let buf = read(source).context("Read source file")?;
         if let Ok(existing) = read(&dest).context("Read existing file") {
             if buf == existing {
                 continue;

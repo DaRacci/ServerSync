@@ -1,7 +1,44 @@
-// trait Merger<T> {
-//     fn merge(existing: &mut T, new: &T) -> anyhow::Result<()>;
-// }
+use std::any::Any;
+use anyhow::{anyhow, Context};
+use simplelog::trace;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::Hash;
+use std::path::Path;
+use crate::file_system::File;
+use crate::FileSystem;
+
+pub trait Mergable {
+    fn merge(&self, other: Self) -> anyhow::Result<Self>
+    where
+        Self: Sized;
+}
+
+// fn try_get_maps(file: File) -> anyhow::Result<(BTreeMap<String, dyn Any>, BTreeMap<String, _>)> {
+//     let extension = file.source.extension()?.to_str()?;
 //
+//     match (extension) {
+//         "conf" => Ok("hocon".to_string()),
+//         "toml" => Ok("toml".to_string()),
+//         "json" => Ok("json".to_string()),
+//         "yaml" => Ok("yaml".to_string()),
+//         "yml" => Ok("yaml".to_string()),
+//         _ => Err(anyhow!("Unknown file type")),
+//     }
+// }
+
+// impl<V> Mergable for Vec<V>
+// where
+//     V: Hash,
+//     V: Eq
+// {
+//     // fn merge(&self, other: Self) -> anyhow::Result<Self> {
+//     //     let mut set = HashSet::from_iter(self.clone().iter().clone());
+//     //
+//     //     // set.extend(other);
+//     //     Ok(set.into_iter().collect_vec())
+//     // }
+// }
+
 // impl<T> Merger<Vec<T>> for T
 // where
 //     T: Eq,
