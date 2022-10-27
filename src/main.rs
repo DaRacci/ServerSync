@@ -243,9 +243,12 @@ fn walk_directory(
 
     // TODO -> This is a bit of a hack, but it works for now.
     for (source, dest) in non_utf8 {
+        trace!("Processing file {}", source.display());
+
         let mut buf = read(source).context("Read source file")?;
         if let Ok(existing) = read(&dest).context("Read existing file") {
             if buf == existing {
+                debug!("File {} is up to date", dest.display());
                 continue;
             }
 
@@ -253,10 +256,10 @@ fn walk_directory(
             rename(&dest, &backup_path).context("Rename old file")?;
 
             let mut file = File::create(&dest).context("Create new file")?;
-            file.write_all(&buf)?;
+            file.write_all(&buf).context("Write out all bytes")?;
         }
 
-        fix_permissions(&dest, &conf).context("Ensure file has correct permissions")?;
+        fix_permissions(&dest, &conf)?;
     }
 
     Ok(())

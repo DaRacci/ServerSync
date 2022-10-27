@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "server_sync"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "anyhow",
  "clap",
