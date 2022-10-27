@@ -271,7 +271,7 @@ fn ensure_ancestors(parent: &Path, conf: &EnvConf) -> anyhow::Result<()> {
         .collect::<Vec<&Path>>();
 
     for ancestor in ancestors_dirs.iter().rev() {
-        if ancestor.starts_with(&conf.destination_root) {
+        if !ancestor.starts_with(&conf.destination_root) {
             continue;
         }
 
