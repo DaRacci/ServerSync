@@ -254,10 +254,10 @@ fn walk_directory(
 
             let backup_path = Path::new(&dest).with_extension("bak");
             rename(&dest, &backup_path).context("Rename old file")?;
-
-            let mut file = File::create(&dest).context("Create new file")?;
-            file.write_all(&buf).context("Write out all bytes")?;
         }
+
+        let mut file = File::create(&dest).context("Create new file")?;
+        file.write_all(&buf).context("Write out all bytes")?;
 
         fix_permissions(&dest, &conf)?;
     }
