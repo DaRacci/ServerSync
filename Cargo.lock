@@ -123,9 +123,9 @@ dependencies = [
 
 [[package]]
 name = "file-owner"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8e7c734d6215b191e0c6944437c1b3d60d35ab8ace80ac3fbb0647d8f65cc44"
+checksum = "36f03ecafcffaf8add486d5424ffd60a25690f9da6a026692bc6c657379fc60c"
 dependencies = [
  "nix",
 ]
@@ -191,15 +191,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "memoffset"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5aa361d4faea93603064a027415f07bd8e1d5c88c9fbf68bf56a285428fd79ce"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "nix"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -209,8 +200,6 @@ dependencies = [
  "bitflags",
  "cfg-if",
  "libc",
- "memoffset",
- "pin-utils",
 ]
 
 [[package]]
@@ -283,12 +272,6 @@ dependencies = [
  "pest",
  "sha1",
 ]
-
-[[package]]
-name = "pin-utils"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "proc-macro-error"
