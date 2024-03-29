@@ -19,7 +19,7 @@ handlebars = "4.3.6"
 walkdir = "2.3.2"
 envfile = "0.2.1"
 anyhow = "1.0.69"
-similar = "2.2.1"
+similar = "2.5.0"
 clap = { version = "4.0.13", features = ["derive", "cargo", "env"] }
 file-owner = "0.1.1"
 simdutf8 = "0.1.4"
